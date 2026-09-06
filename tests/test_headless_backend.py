@@ -207,9 +207,13 @@ class ConfigurationTests(unittest.TestCase):
 
     @unittest.skipIf(__import__("os").name == "nt", "POSIX lock test")
     def test_single_instance(self):
-        with tempfile.TemporaryDirectory() as root, session_lock(Path(root)):
-            with self.assertRaises(BackendError), session_lock(Path(root)):
-                pass
+        with (
+            tempfile.TemporaryDirectory() as root,
+            session_lock(Path(root)),
+            self.assertRaises(BackendError),
+            session_lock(Path(root)),
+        ):
+            pass
 
 
 if __name__ == "__main__":
