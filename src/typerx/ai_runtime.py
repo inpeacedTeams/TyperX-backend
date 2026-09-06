@@ -116,7 +116,7 @@ def driver_output(text, config, guard, stopped, notify):
     guard.check()
     # Driver-only output cannot type arbitrary Unicode. Validate before the first keystroke.
     text = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", text)
-    text = text.translate(str.maketrans({“: '"', ”: '"', ‘: "'", ’: "'",
+    text = text.translate(str.maketrans({"\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'",
                                        "—": "-", "–": "-", "…": "...", "\u00a0": " "}))
     keyboard = InterceptionKeyboard(guard.hwnd)
     try:
