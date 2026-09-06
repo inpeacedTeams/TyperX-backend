@@ -11,10 +11,11 @@ requires-python = ">=3.12,<3.14"
 license = { text = "MIT" }
 authors = [{ name = "inpeacedTeams" }]
 dependencies = [
-    "interception-python>=1.13.6,<2",
-    "pywin32>=308",
-    "pywinauto>=0.6.9,<0.7",
+    "interception-python>=1.13.6,<2; sys_platform == 'win32'",
+    "pywin32>=308; sys_platform == 'win32'",
+    "pywinauto>=0.6.9,<0.7; sys_platform == 'win32'",
     "telethon>=1.36,<2",
+    "httpx>=0.28,<1",
 ]
 
 [project.optional-dependencies]
