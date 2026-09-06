@@ -7,6 +7,7 @@ from unittest.mock import patch
 from typerx.backend_outputs import TelegramOutput
 from typerx.conversation import BackendError, Conversation, Message, fragments
 from typerx.headless import Config, main, session_lock
+from typerx.reaction_settings import ReactionSettings
 
 
 async def eventually(predicate):
@@ -47,7 +48,9 @@ class FakeOutput:
 class ConversationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.model, self.output = FakeModel(), FakeOutput()
-        self.engine = Conversation(10, self.model, self.output, reaction_cooldown=0)
+        # Explicit compatibility option; default reply-only behavior has separate tests.
+        self.engine = Conversation(10, self.model, self.output, reaction_cooldown=0,
+                                   reactions=ReactionSettings(numeric_reply_only=False))
         self.task = asyncio.create_task(self.engine.run())
 
     async def asyncTearDown(self):
@@ -91,10 +94,11 @@ class ConversationTests(unittest.IsolatedAsyncioTestCase):
     async def test_third_party_first_fragment_reply_rest_plain(self):
         self.engine._remember(self.engine.sent, 50)
         self.engine.accept(Message(2, 20, "автотайпер", 50))
+        self.model.results.put_nowait("Ответ модели на обращение")
         await eventually(lambda: len(self.output.sent) == 4)
         self.assertEqual(self.output.sent[0][1], 2)
         self.assertTrue(all(reply is None for _, reply in self.output.sent[1:]))
-        self.assertEqual(len(self.model.calls), 0)
+        self.assertEqual(len(self.model.calls), 1)
 
     async def test_other_sender_without_reply_ignored(self):
         self.assertFalse(self.engine.accept(Message(1, 20, "123")))
