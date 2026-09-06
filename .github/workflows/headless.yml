@@ -22,3 +22,4 @@ jobs:
       - run: python -m typerx --help
       - run: python -m unittest discover -s tests -p "test_headless_backend.py" -v
       - run: python -m unittest discover -s tests -p "test_backend_http.py" -v
+      - run: python -m unittest discover -s tests -p "test_keystrokes.py" -v
