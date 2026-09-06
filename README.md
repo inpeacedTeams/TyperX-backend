@@ -1,30 +1,21 @@
 # TyperX Backend
 
-Headless Telegram conversation service with an OpenAI-compatible LLM and two explicit output modes. No frontend and no HTTP server. Python 3.12/3.13; driver mode requires Windows and Interception.
+Headless Telegram conversation service with an OpenAI-compatible LLM and two output modes: Telethon sending or Windows Interception typing. No frontend and no HTTP listener. Python 3.12/3.13.
 
-## Active architecture
+## Architecture and behavior
 
-- `headless.py`: CLI, validated configuration, account lifecycle, cancellable HTTP client, single-process lock.
-- `conversation.py`: single-writer scheduler, batched context, priority reactions, exact word splitting, bounded queues and deduplication.
-- `backend_outputs.py`: Telethon sending or Windows driver typing; no automatic fallback.
-- `platform/interception_keyboard.py`: existing physical keyboard adapter.
+- `headless.py`: CLI, validated settings, Telegram lifecycle and separate normal/priority LLM clients.
+- `conversation.py`: bounded incoming batches, priority reactions and a single output writer.
+- `reaction_settings.py`: serializable reaction settings, literal rule matching and JSON Schema.
+- `delivery_state.py`: confirmed output separated from in-flight and unattempted text.
+- `keystrokes.py`: correlated key-down/key-up plans and cancellable playback.
+- `backend_outputs.py`: explicit Telethon/driver adapters without automatic fallback.
 
-The CLI no longer uses the old UI-oriented `Runtime`/`SenderRuntime` hierarchy. Those modules and their regression tests remain as legacy compatibility code, not as the active service. `ai.json`, its presets and the old Telegram session are not automatically migrated. `GOAL-AI-MODE.md` has been removed.
+The first ordinary target message starts one normal generation. Later ordinary messages accumulate for one next batch; they do not cancel the current answer. Priority reactions interrupt at output-fragment boundaries, then the original answer resumes. At most one normal and one priority LLM request run together; they never type concurrently.
 
-## Conversation semantics
+Numeric checks in replies (`123`, `напиши 123`, `повтори 123`) can skip the LLM. Semantic challenges now use a configurable priority model, not the earlier fixed response. Through Telethon only the first reaction fragment uses reply_to; the driver types in the current chat without selecting a reply. Only the target or eligible participants replying to confirmed service messages are accepted.
 
-1. The first ordinary target message starts one LLM generation.
-2. Later messages are buffered; they neither start parallel generations nor invalidate the current answer.
-3. The current answer is sent in exact groups of `words` tokens. `words: 1` means one word per message, without the legacy smart splitter's merging.
-4. Priority reactions can interrupt between confirmed fragments. The remaining original answer then resumes without regeneration or replay.
-5. Buffered ordinary messages form one next batch, with the in-memory conversation context.
-
-Only the selected target or a participant replying to a **confirmed service message in the selected chat** can trigger an answer. Messages from bots, anonymous/channel senders and unrelated participants are ignored. Replies to old/manual account messages do not qualify. Confirmation IDs and deduplication are bounded to the latest 4096 entries per session.
-
-Exact numeric messages of 1..12 ASCII digits receive an immediate echo without an LLM call. The phrases `ты с софтом`, `нейронка`, `гейронка`, `автотайпер` receive the fixed honest response `Да, это автоматизированный ответ.` The service does not falsely claim to be a human. Other direct replies use the model; numeric reactions can interrupt their generation too. Reaction processing is rate-limited; an already sending reaction is completed before another reaction.
-
-- **Telethon:** the first fragment of a reaction to a reply uses Telegram's `reply_to`; later fragments are plain messages. No Desktop window needed.
-- **Driver:** every fragment is physically typed and sent with Enter in the selected Desktop chat. Reaction reply metadata is intentionally ignored. Interruption occurs after the current fragment is confirmed sent, not in the middle of an unsent word.
+See [reaction settings and delivery-state contract](docs/reactions.md) and [typing rhythm](docs/typing-rhythm.md). `GOAL-AI-MODE.md` was removed. Legacy UI-oriented runtime classes remain for compatibility tests but are not used by the CLI. Old `ai.json`/session settings are not automatically migrated.
 
 ## Install
 
@@ -32,19 +23,16 @@ Exact numeric messages of 1..12 ASCII digits receive an immediate echo without a
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
-```
-
-Driver mode additionally needs the Interception driver: run `install_driver.bat` as administrator and reboot. Do not install the driver merely to use Telethon mode. Windows-only dependencies have platform markers; the isolated headless tests also run on Linux.
-
-## Configure and run
-
-```powershell
 typerx init
 ```
 
-This creates `%APPDATA%\TyperX\backend.json` on Windows (`~/.config/TyperX/backend.json` elsewhere). `init` refuses to overwrite an existing file. A custom location can be selected with `typerx --data-dir C:\TyperXData init`; use the same option for subsequent commands.
+Driver mode requires Windows, the installed Interception driver and a reboot (`install_driver.bat` as administrator). Telethon mode does not need the driver or an open Telegram Desktop window. Windows dependencies have platform markers.
 
-Provide credentials in the current process environment; never commit them or paste them into an issue. PowerShell can collect the secrets without saving their values in command history:
+`init` creates `%APPDATA%\TyperX\backend.json` on Windows or `~/.config/TyperX/backend.json` elsewhere and refuses to overwrite an existing file. Use `typerx --data-dir C:\TyperXData init` for a different directory, and use that same option in subsequent commands.
+
+## Credentials and chat selection
+
+Obtain your own Telegram application credentials from my.telegram.org. Provide secrets in the current process environment; do not commit them or paste them into issues. PowerShell hidden input avoids storing actual secret values in command history:
 
 ```powershell
 $env:TYPERX_TELEGRAM_API_ID = Read-Host "Telegram api_id"
@@ -55,73 +43,64 @@ typerx login
 typerx chats
 ```
 
-`login` prompts for phone, code and optional 2FA password. Obtain your own Telegram application credentials through my.telegram.org. An unauthenticated local LLM may omit `TYPERX_LLM_API_KEY`.
+`login` prompts for phone, code and optional 2FA. An unauthenticated local model may omit the LLM key.
 
-Edit `backend.json`:
+Edit backend.json:
 
-- Set `chat_id` from `typerx chats` (groups use a negative ID).
-- Run `typerx history` to list the last 50 message IDs and sender IDs for that chat, without printing message text. Set `target_sender_id` to the desired positive user ID. In a private chat it must equal `chat_id`.
-- Choose `output`: `telethon` or `driver`.
-- Set `base_url`, `model` and `prompt` for your provider/personality.
-- Set `share_context: true` only after agreeing to transmit the accepted conversation messages, including qualifying third-party replies, to that provider.
-
-Key defaults:
-
-```json
-{
-  "output": "telethon",
-  "chat_id": 0,
-  "target_sender_id": 0,
-  "wpm": 350,
-  "words": 1,
-  "min_send_interval": 1.0,
-  "reaction_cooldown": 2.0,
-  "queue_capacity": 256,
-  "request_timeout": 30.0,
-  "share_context": false
-}
-```
-
-Zero IDs and `share_context: false` intentionally prevent running until configured. Omitted configuration fields use defaults. Unknown fields and invalid types are rejected.
+1. Set `chat_id` from `chats` (group IDs are negative).
+2. Run `typerx history` to list recent message/sender IDs without message text. Set the desired positive `target_sender_id`; in a private chat it must equal chat_id.
+3. Choose `output`: `telethon` or `driver`; set `base_url`, `model`, `prompt`, `wpm` and `words`.
+4. Set `share_context: true` only after agreeing to send accepted messages, including eligible third-party replies, to that provider.
+5. Optionally configure the nested `reactions` object described in [docs/reactions.md](docs/reactions.md). Old configs without it use defaults.
 
 ```powershell
 typerx check
 typerx run
 ```
 
-`check` validates configuration syntax only, not credentials, network access or the driver. In driver mode, open the selected chat in a uniquely named Telegram Desktop window, put focus in an empty message editor and press **F8**. A generic `Telegram` window title, duplicate chat names, an unavailable UIA editor or a non-Telegram process is rejected.
+`check` validates syntax/settings, not account/network/driver readiness. In driver mode, focus an empty editor in a uniquely named Telegram Desktop chat window, then press F8. Generic Telegram titles, duplicate chat names and unsupported UIA editors are rejected.
 
-**Ctrl+C stops the service. F9 stops it on Windows**, including cancellation of pending generation. F9 also aborts the driver startup wait. There is no automatic restart after errors or focus loss. Inspect/clear any unfinished draft before restarting. `typerx logout` revokes the local Telegram session.
+Ctrl+C stops the service; F9 stops it on Windows and aborts driver startup. Inspect any unfinished draft before restarting. `typerx logout` revokes the local session. There is no automatic restart or output-mode fallback.
 
-## Rates and failure policy
+## Configuration defaults and limits
 
-- `wpm` accepts 25..600; 350 is not clamped by the legacy 300-WPM configuration. In Telethon mode it is a pacing target using the conventional 5 characters per word, not physical typing. Actual delivery is also bounded by `min_send_interval` (default 1 second), network latency and Telegram limits.
-- Driver timing uses physical key intervals, jitter and outgoing-message confirmation. Actual WPM depends on Windows UIA, keyboard layout changes and Telegram Desktop. It is not a guaranteed throughput.
-- One-word messages can hit Telegram limits even at seemingly modest typing speeds. No rate setting guarantees freedom from FloodWait or account restrictions. Test with consenting participants; do not use the service for spam.
-- No automatic retry of ambiguous sends, FloodWait, LLM failures or disconnects. The process stops with a safe diagnostic. This deliberately favors avoiding duplicates over uninterrupted availability.
-- Accepted queues are bounded. Overflow and oversized incoming context stop the service rather than silently discarding messages.
-- Conversation context, pending batches and resume position are in memory only. Restarting does not replay old events or restore pending output. The service starts fresh and does not automatically feed previous chat history to the model.
-- Driver acknowledgements match outgoing text observed through Telethon. This is best-effort confirmation, not an identity proof: do not type manually or use another sending client on the same account while it runs.
-- Private chats and ordinary groups are supported; broadcast channels and forum topics are rejected.
+- `wpm`: 350 by default, allowed 25..600. 450 is accepted without the legacy 300-WPM clamp. It is a target, not a throughput or human-biometric guarantee.
+- `words`: 1 by default, allowed 1..16; exact grouping without the legacy smart splitter's merging.
+- `min_send_interval`: 1 second by default, applies to Telethon. Telethon also waits for simulated typing duration before sending. Driver mode plays physical key events and waits for confirmation.
+- `reaction_cooldown`: 2 seconds by default; total `queue_capacity`: 256; normal `request_timeout`: 30 seconds.
+- Priority model/context/token/timeout settings are independent within `reactions`; the base URL and API key are shared. Two concurrent model requests can consume additional provider quota.
+- Private chats and ordinary groups are supported; broadcast channels/forums are rejected.
 
-## Tests and current readiness
+One-word messages can hit Telegram restrictions. WPM cannot bypass FloodWait or network delays. Ambiguous sends, disconnects and overflow stop the service without retry. A failed priority generation may resume normal work when `reactions.on_error` is `resume`; output failures cannot use that fallback. Numeric reactions still obey typing and pacing limits.
+
+Conversation history, queues, delivery IDs and resume positions are session-local. Restarting neither restores pending output nor replays old events; previous chat history is not automatically sent to the model. Driver outgoing-text matching is best-effort confirmation, not an identity proof: do not send manually or from another client on the same account during a run.
+
+## Frontend later
 
 ```powershell
+typerx reaction-schema
+```
+
+This exports JSON Schema without credentials or a config file. Future UI controls can consume the schema and the detached `Conversation.state()` delivery snapshots. No HTTP endpoint or frontend is added now; settings apply after stop/save/restart, not by mutating an active service. Snapshots contain private text and must not be published or logged.
+
+## Checks and release gate
+
+```powershell
+python -m unittest discover -s tests -p "test_reactions.py" -v
 python -m unittest discover -s tests -p "test_headless_backend.py" -v
 python -m unittest discover -s tests -p "test_backend_http.py" -v
+python -m unittest discover -s tests -p "test_keystrokes.py" -v
 ruff check src tests
 python -m pytest
 python -m compileall -q src
 ```
 
-The 26 new isolated scheduler/configuration/adapter/HTTP tests passed on Python 3.13 in a sandbox. New source modules passed syntax compilation. These tests use fake Telegram/model/HTTP transports; they are not a live integration test. The complete legacy suite, Ruff, real httpx/Telethon installation, Windows COM/Interception and account-level delivery still need CI and controlled Windows acceptance testing before calling this production-ready. The PR remains a draft until those checks pass.
+The latest reaction increment passed 28 isolated local tests and syntax compilation. These use fake models/transports, not a live account. Existing headless tests were updated for new reaction defaults. Full CI and live Windows/Telegram acceptance must pass before production use; the PR remains under validation.
 
-Windows acceptance checklist: successful login; target-only dialogue; messages arriving during generation and typing form one next batch; numeric reply from a second participant; first Telethon fragment has the correct reply target; driver reaction is plain text; remaining answer resumes once; F9 during generation and typing; focus/editor change; unsupported character; FloodWait/disconnect; no automatic duplicate sends; second process rejected.
+Acceptance: burst messages form one next batch; numeric reply skips LLM; semantic generation runs alongside normal generation with one writer; normal remainder resumes once; first Telethon reaction fragment is a reply; driver reactions are plain text; F9/focus loss releases keys; unknown sends are not counted as confirmed or retried; second local process is rejected.
 
-## Local data and security
+## Security and local data
 
-`backend.json` contains non-secret settings and the prompt. `backend-telegram.session` grants access to the Telegram account and is **not encrypted by DPAPI**. Protect the whole data directory with OS permissions; exclude it from cloud backups. Environment variables are not a secret vault and are accessible to sufficiently privileged processes. Legacy DPAPI files are not used by this new CLI.
+`backend-telegram.session` grants Telegram account access and is not encrypted by DPAPI. Protect the data directory with OS permissions and exclude it from cloud backups. Environment variables are not a secret vault. Settings and the prompt are in backend.json; new CLI settings do not use legacy DPAPI files.
 
-The service communicates with Telegram and the configured LLM provider. Local-first does not mean offline. No application HTTP listener, analytics or updater is started. Application error messages omit remote response bodies, keys and chat text. LLM redirects and environment-provided HTTP proxies are disabled; HTTPS is required except for localhost.
-
-See [SECURITY.md](SECURITY.md). MIT license.
+Local-first does not mean offline: Telegram and the configured LLM receive network requests. Application diagnostics omit remote response bodies, keys and chat text. LLM redirects/environment HTTP proxies are disabled; HTTPS is required except for localhost. See [SECURITY.md](SECURITY.md). MIT license.
