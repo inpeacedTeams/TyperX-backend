@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "typerx"
+version = "1.2.0"
+description = "Local-first natural typing and AI engine for Windows"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "MIT" }
+authors = [{ name = "inpeacedTeams" }]
+dependencies = [
+    "interception-python>=1.13.6,<2",
+    "pywin32>=308",
+    "pywinauto>=0.6.9,<0.7",
+    "telethon>=1.36,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-cov>=6", "ruff>=0.9", "mypy>=1.14"]
+
+[project.scripts]
+typerx = "typerx.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/typerx"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q --disable-warnings --maxfail=1"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501", "E701", "E702", "I001", "RUF001", "RUF012", "SIM105", "UP037"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["typerx"]
