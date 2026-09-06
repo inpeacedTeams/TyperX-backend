@@ -228,7 +228,7 @@ class Conversation:
                     self.last_reaction = asyncio.get_running_loop().time()
                     if self.settings.on_error == "stop":
                         raise
-                    return False  # No auto-retry and no canned identity denial.
+                    return False
             else:
                 parts = (text,)
             delivery = DeliveryState("numeric" if reaction.numeric_text is not None else "semantic",
@@ -246,7 +246,9 @@ class Conversation:
             for delivery in paused:
                 if delivery.status == "paused":
                     delivery.status = "ready"
-            if previous_reaction is not None and any(d is previous_reaction for d in paused):
+            if (previous_reaction is not None and any(d is previous_reaction for d in paused)
+                    and self.reaction_delivery is not None
+                    and self.reaction_delivery.status != "uncertain"):
                 self.reaction_delivery = previous_reaction
 
     async def _generate(self, snapshot: list[dict[str, str]]) -> str:
