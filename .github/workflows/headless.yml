@@ -1,0 +1,27 @@
+name: headless-backend
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  isolated:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.12', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e .
+      - run: python -m typerx --help
+      - run: python -m typerx reaction-schema
+      - run: python -m unittest discover -s tests -p "test_headless_backend.py" -v
+      - run: python -m unittest discover -s tests -p "test_backend_http.py" -v
+      - run: python -m unittest discover -s tests -p "test_keystrokes.py" -v
+      - run: python -m unittest discover -s tests -p "test_reactions.py" -v

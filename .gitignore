@@ -19,3 +19,5 @@ dist/
 *.session-*
 ai-secrets.bin
 ai.json
+backend.json
+backend.lock
