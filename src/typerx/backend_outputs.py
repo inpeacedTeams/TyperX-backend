@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import os
-import random
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from typerx.conversation import BackendError
+from typerx.keystrokes import KeyPlanner, play
 
 
 class TelegramOutput:
@@ -15,17 +15,19 @@ class TelegramOutput:
         self.client, self.peer = client, peer
         self.wpm, self.min_interval = wpm, min_interval
         self.next_send = 0.0
+        self.planner = KeyPlanner(wpm)
 
     async def send(self, text: str, reply_to: int | None = None) -> int:
         loop = asyncio.get_running_loop()
-        await asyncio.sleep(max(0.0, self.next_send - loop.time()))
+        duration = self.planner.plan(text).duration
+        await asyncio.sleep(max(duration, self.next_send - loop.time()))
         try:
             message = await self.client.send_message(
                 self.peer, text, reply_to=reply_to, parse_mode=None, link_preview=False)
         except Exception as exc:
             # Includes FloodWait: stop, don't retry uncertain sends or bypass limits.
             raise BackendError(f"Telegram send failed ({type(exc).__name__}); no retry") from None
-        self.next_send = loop.time() + max(self.min_interval, 60 * len(text) / (5 * self.wpm))
+        self.next_send = loop.time() + self.min_interval
         return message.id
 
     async def close(self):
@@ -53,6 +55,7 @@ class DriverOutput:
         self.executor = ThreadPoolExecutor(max_workers=1, initializer=_initialize_com)
         self.hwnd = None
         self.editor_id = None
+        self.planner = KeyPlanner(wpm)
         self.expected: str | None = None
         self.confirmation: asyncio.Future[int] | None = None
 
@@ -134,22 +137,7 @@ class DriverOutput:
             for char in set(text):
                 self._check()
                 keyboard._resolve_char(char)
-            interval = 60 / (5 * self.wpm)
-            for char in text:
-                self._check()
-                key = keyboard.press(char)
-                try:
-                    self.stopped.wait(min(0.018, interval / 2))
-                finally:
-                    keyboard.release(key)
-                if self.stopped.wait(interval * random.uniform(0.85, 1.15) / 2):
-                    raise BackendError("Driver stopped; inspect the draft")
-            self._check()
-            key = keyboard.press_enter()
-            try:
-                self.stopped.wait(0.018)
-            finally:
-                keyboard.release(key)
+            play(self.planner.plan(text), keyboard, self._check, self.stopped)
         finally:
             keyboard.close()
 
